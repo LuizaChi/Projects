@@ -1,1 +1,228 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
+from sklearn.impute import SimpleImputer
+
+from sklearn.preprocessing import MinMaxScaler
+
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, roc_curve, confusion_matrix, classification_report, precision_recall_curve
+
+from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
+
+from statsmodels.stats.contingency_tables import mcnemar
+from mlxtend.evaluate import mcnemar_table
+
+# Load the dataset
+url = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv"
+names = ['Pregnancies', 'Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI', 'DiabetesPedigreeFunction', 'Age', 'Outcome']
+data = pd.read_csv(url, names=names)
+
+# Check for and visualize the missing values
+## take out 'Pregnancies' and 'Outcome' since these can contain 0 as value
+data_selected = data.drop('Pregnancies', axis = 1).drop('Outcome', axis = 1)
+## create a series containing the null values for each attribute
+null_values_series = pd.Series("int64")
+null_values_series = (data_selected == 0).sum(axis = 0)
+null_values_series
+
+## plot the series containing the null values by attribute
+null_values_series.plot.bar()
+
+# Since there are many null values (e.g. for "test" almost half of the dataset does not have a value), we cannot drop/ignore the data points with missing values.
+# We thus replace the null values with the average value per attribute.
+## We extract the column names and eliminate the 2 that we do not want to change i.e. "preg" and "class" (these do not have missing values)
+col = data.columns.values.tolist()
+col.pop(0)
+col.pop(7)
+## We create a new df using the copy of the dataset from which we select the columns that we will impute and replace the null values with np.nan
+df_1 = pd.DataFrame(data = data, columns = col)
+df_nan =  df_1.replace(0, np.NaN)
+## We use SimpleImputer to replace the missing values with the average value per attribute
+imputer = SimpleImputer(missing_values = np.NaN, strategy = "median")
+imp_array = imputer.fit_transform(df_nan)
+df_i = pd.DataFrame(data = imp_array, columns = col)
+data[col] = df_i
+
+# Visualizing the distribution of each of the eight features versus normal distribution
+fig, ax2 = plt.subplots(4, 2, figsize = (9,16))
+
+sns.histplot(data["Pregnancies"], ax = ax2[0][0], label = "Pregnancies", kde = True)
+
+sns.histplot(data["Glucose"], ax = ax2[0][1], label = "Glucose", kde = True)
+
+sns.histplot(data["BloodPressure"], ax = ax2[1][0], label = "BP", kde = True)
+
+sns.histplot(data["SkinThickness"], ax = ax2[1][1], label = "ST", kde = True)
+
+sns.histplot(data["Insulin"], ax = ax2[2][0], label = "Insulin", kde = True)
+ax2[2][0].set(ylim=(0, 15))
+
+sns.histplot(data["BMI"], ax = ax2[2][1], label = "BMI", kde = True)
+
+sns.histplot(data["DiabetesPedigreeFunction"], ax = ax2[3][0], label = "DPF", kde = True)
+
+sns.histplot(data["Age"], ax = ax2[3][1], label = "Age", kde = True)
+
+# Standardization of data and separation of features from target
+attr = ['Pregnancies', 'Glucose', 'BloodPressure', 'SkinThickness', 'Insulin', 'BMI', 'DiabetesPedigreeFunction', 'Age']
+X1 = data[attr]
+scaler = MinMaxScaler()
+X1 = scaler.fit_transform(X1)
+X = pd.DataFrame(X1, columns = attr)
+y = pd.Series(data['Outcome'])
+
+# Visualizing the split between healthy and diabetes
+sns.countplot (data = data, x = data['Outcome'])
+
+# Split the data into training and test sets using stratified sampling
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.2, stratify = data["Outcome"], random_state=123)
+
+# Create the LR model
+lr_model_init = LogisticRegression(solver = 'liblinear')
+
+# Check the average cross-validation score with stratified k-fold with cv=5
+lr_cross_val_score = np.mean(cross_val_score(lr_model_init, X, y, cv = 5))
+lr_cross_val_score
+
+# Run a grid search to help choose the best LR classifier
+grid_values_lr = {'max_iter': [10, 100, 1000], 'C': [0.1,1,10]}
+gs_lr = GridSearchCV(lr_model_init, param_grid = grid_values_lr, cv = 5)
+
+# Train the model
+gs_lr.fit(X_train, y_train)
+
+# Choose the best classifier
+lr_model = gs_lr.best_estimator_ 
+lr_model
+
+# Make predictions on the test set
+lr_y_pred = lr_model.predict(X_test)
+
+# Calculate Accuracy, Precision, Recall, F1-score of LR for test set
+
+# Accuracy
+LR_accuracy = accuracy_score(y_test, lr_y_pred)
+print("LR Accuracy: ", LR_accuracy)
+
+# Precision
+LR_precision = precision_score(y_test, lr_y_pred)
+print("LR Precision: ", LR_precision)
+
+# Recall
+LR_recall = recall_score(y_test, lr_y_pred)
+print("LR Recall: ", LR_recall)
+
+#F1-score
+LR_f1score = f1_score(y_test, lr_y_pred)
+print("LR F1-score: ", LR_f1score)
+
+#ROC-AUC score
+LR_roc_auc_score = roc_auc_score(y_test, lr_y_pred)
+print("LR ROC AUC score: ", LR_roc_auc_score)
+
+# Generate classification report
+print(classification_report(y_test, lr_y_pred, labels=[1, 0]))
+
+# Confusion matrix for LR
+LR_confusion_matrix = confusion_matrix(y_test, lr_y_pred, labels=[1, 0])
+print(LR_confusion_matrix)
+
+# Calculating the intercept and model coefficients
+print("The intercept is %.3f" % lr_model.intercept_)
+print("The model coefficients are:")
+for i, j in zip(attr, lr_model.coef_.reshape(-1,1)):
+  print("\t %s %.4f" % (i, j))
+  
+# Transforming the coefficients in effect size to interpret them
+print("The effet sizes are:")
+for i, j in zip(attr, np.exp(lr_model.coef_.reshape(-1,1))):
+  print("\t %s %.4f" % (i, j))
+
+# Create the XGBoost model
+xgb_model_init = XGBClassifier()
+
+# Check the average cross-validation score with stratified k-fold with cv=5
+xgb_cross_val_score = np.mean(cross_val_score(xgb_model_init, X, y, cv = 5))
+xgb_cross_val_score
+
+# Run a grid search to help choose the best XGB classifier
+grid_values_xgb = {'max_depth': [4, 5, 6], 'min_child_weight': [1, 2, 3, 4, 5, 6]}
+gs_xgb = GridSearchCV(xgb_model_init, param_grid = grid_values_xgb, cv = 5)
+
+# Train the model
+gs_xgb.fit(X_train, y_train)
+
+# Choose the best classifier
+xgb_model = gs_xgb.best_estimator_ 
+xgb_model
+
+# Make predictions on the test set
+xgb_y_pred = xgb_model.predict(X_test)
+
+# Calculate Accuracy, Precision, Recall, F1-score of XGB for test set
+
+# Accuracy
+XGB_accuracy = accuracy_score(y_test, xgb_y_pred)
+print("XGB Accuracy: ", XGB_accuracy)
+
+# Precision
+XGB_precision = precision_score(y_test, xgb_y_pred)
+print("XGB Precision: ", XGB_precision)
+
+# Recall
+XGB_recall = recall_score(y_test, xgb_y_pred)
+print("XGB Recall: ", XGB_recall)
+
+#F1-score
+XGB_f1score = f1_score(y_test, xgb_y_pred)
+print("XGB F1-score: ", XGB_f1score)
+
+#ROC-AUC score
+XGB_roc_auc_score = roc_auc_score(y_test, xgb_y_pred)
+print("XGB ROC AUC score: ", XGB_roc_auc_score)
+
+print(classification_report(y_test, xgb_y_pred, labels=[1, 0]))
+
+#Confusion matrix for XGB
+
+XGB_confusion_matrix = confusion_matrix(y_test, xgb_y_pred, labels=[1, 0])
+print(XGB_confusion_matrix)
+
+# Create the contingency table
+# Initialize variables to store counts
+lr_correct = 0
+lr_incorrect = 0
+xgb_correct = 0
+xgb_incorrect = 0
+both_correct = 0
+both_incorrect = 0
+
+# Loop through the test set and count the number of correct and incorrect predictions for each classifier
+for i in range(len(y_test)):
+  if y_test.iloc[i] == lr_y_pred[i]:
+    lr_correct += 1
+  else:
+    lr_incorrect += 1
+
+  if y_test.iloc[i] == xgb_y_pred[i]:
+    xgb_correct += 1
+  else:
+    xgb_incorrect += 1
+
+  if y_test.iloc[i] == lr_y_pred[i] and y_test.iloc[i] == xgb_y_pred[i]:
+    both_correct += 1
+  elif y_test.iloc[i] != lr_y_pred[i] and y_test.iloc[i] != xgb_y_pred[i]:
+    both_incorrect += 1
+
+# Create the contingency table
+contingency_table = [
+  [both_incorrect, lr_incorrect-both_incorrect],
+  [xgb_incorrect-both_incorrect, both_correct]
+]
+
+# Print the contingency table
+print(contingency_table)
